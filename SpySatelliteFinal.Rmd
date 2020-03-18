@@ -1,0 +1,251 @@
+---
+title: "ENV 390 Final"
+subtitle: "Unlisted Spy Satellite Classification"
+author: "Noah DeMar"
+date: "March 4, 2020"
+output:
+  html_document:
+    df_print: paged
+    fig_caption: true
+  pdf_document:
+    fig_width: 5 
+    fig_height: 3 
+header-includes: 
+- \usepackage{float}
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Required packages:
+```{r eval=F,echo=T}
+install.packages('rmarkdown')
+install.packages('knitr')
+```
+
+Required packages:
+```{r eval=F,echo=T}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library('e1071')
+library('caret')
+```
+
+```{r warning=F, message=F, echo=T}
+dataurl = "https://www.ucsusa.org/media/11492"
+df = read.csv('UCS_Satellite_Database_4-1-2019.csv',stringsAsFactors = FALSE)
+knitr::opts_chunk$set(cache=TRUE)  ###cache the results for quick compiling
+```
+
+# Data and Method
+### All data has been sourced from United Nations' satellite database: https://www.ucsusa.org/media/11492z
+### 1) Read in satellite database
+### 2) Look for patterns to classifiy satellites by their characteristics (Nationality, Orbit geometry, Mass of satellite)
+### 3) Use support vector machine to characterize differences between commercial and military satellites
+### 4) Investigate the purpose and launch details of commerical satellites in traditionally military satellite zones
+
+### Useful terms: 
+### Apogee/Perigee describe the altitude that a satellite orbits at
+### Inclination the tilt of a satellite's orbit
+### Period is the time it takes a satellite to go around the earth
+
+### I notice that satellites tend to cluser at two different orbital planes, and that small satellites are more common than big ones.
+```{r eval=T,message=F,warning=F,results = 'hide', echo=T}
+#Type of Orbit
+library(ggplot2) 
+p1 = ggplot(df, aes(x=launch_mass,y=Apogee, col=type_of_orbit))+
+  ggtitle("Apogee vs Launch Mass") +
+  xlab("Launch Mass (Kg)")+
+  ylab("Apogee (Km)")+
+  guides(color=guide_legend(title="Type of Orbit"))+
+  geom_point()+
+  theme_bw()
+p1 
+
+```
+
+### Using Log plot we can see that satellites tend to come in certain sizes about an order of magnitude apart.
+### We can also see that satellites that have similar purposes are located in similar orbital planes in space.
+```{r eval=T,message=F,warning=F,results = 'hide', echo=T}
+p2 = ggplot(df, aes(x=launch_mass,y=Apogee, col=Users))+
+  ggtitle("Apogee vs Launch Mass") +
+  scale_y_continuous(trans='log10')+
+  scale_x_continuous(trans='log10')+
+  xlab("Launch Mass (Kg)")+
+  ylab("Apogee (Km)")+
+  guides(color=guide_legend(title="Satellite Users"))+
+  geom_point()+
+  theme_bw()
+p2 
+
+```
+
+### Using other characteristics of satellite orbits (inclination and period), we can see that there is no visually apparent relationship between launch year and orbit goemetry.
+```{r tmax_monthly,message=F,warning=F,results = 'hide', echo=T}
+p3 = ggplot(df, aes(x=Period,y=Inclination, col=format(as.Date(df$Date.of.Launch, format="%d/%m/%Y"),"%Y")))+
+  ggtitle("Orbital Geometry Characterized by Launch Year") +
+  scale_y_continuous(trans='log10')+
+  scale_x_continuous(trans='log10')+
+  ylab("Inclination (deg)")+
+  xlab("Period (min)")+
+  guides(color=guide_legend(title="Year of launch"))+
+  geom_point()+
+  theme_bw()
+p3 
+```
+
+### Only three entries in the dataset actually "admit" to being surveillance or spy satellites.
+
+### These satellites all share a very small neighborhood in space (see axes compared to previous plot).
+```{r eval=T, echo=T, warning=F, message = F}
+#known spy sats
+spy = subset(df,df$Purpose=="Surveillance")
+
+p4 = ggplot(spy, aes(x=Perigee,y=Apogee, col=Purpose))+
+  ggtitle("Known Surveillance Satellite Orbits") +
+  ylab("Perigee (km)")+
+  xlab("Apogee (Km)")+
+  guides(color=guide_legend(title="Satellite Purpose"))+
+  geom_point()+
+  theme_bw()
+p4 
+
+```
+
+### I am separating the dataset into military and commerical sets by combining all their purpose tags.
+```{r eval=T, echo=T, warning=F, message = F}
+mil = subset(df,df$Users %in% c("Military","Commercial/Military","Government/Commercial/Military","Government/Military","Military/Civil","Military/Commercial","Military/Government"))
+
+mil$Users = 'Military'
+
+`%notin%` <- Negate(`%in%`)
+com = subset(df,df$Users %notin% c("Military","Commercial/Military","Government/Commercial/Military","Government/Military","Military/Civil","Military/Commercial","Military/Government"))
+
+com$Users = 'Commercial'
+
+combined = rbind(com,mil)
+
+```
+
+### To confirm the validity of SVM classification on this dataset I have classified the four orbit types below. This makes sense, as orbit height goes: Elliptical>GEO>MEO>LEO which is represented in the plot.
+```{r eval=T, echo=T, warning=F, message = F}
+### Orbital characteristics 
+library('e1071')
+library('caret')
+orbchar = dplyr::select(df, class_of_orbit, Apogee, Perigee)
+orbchar=orbchar[-c(818,1243,1874),]
+m = svm(class_of_orbit~., data = orbchar,type = "C")
+plot(m,orbchar,title="Orbital Characteristic Classifications")
+
+```
+
+### From here I am going to restrict my dataset to the top three producers of military satellites.
+```{r eval=T, echo=T, warning=F, message = F}
+#Mil sats by Purpose 
+library(dplyr)
+
+topcountries = count(mil, vars = mil$Country)
+knitr::kable(arrange(topcountries,n), col.names=c("Country", "Number of Military Satellites"))
+
+```
+
+### You can see that nation's will cluster their spy satellites in space.
+```{r eval=T, echo=T, warning=F, message = F}
+#Satellites in three country subset
+milnat = dplyr::select(combined,Country,Apogee,Perigee)
+milnat = subset(milnat, milnat$Country == c("USA","China","Russia"))
+milnat = subset(milnat,milnat$Perigee<30000)
+milnat = subset(milnat,milnat$Apogee>15000)
+p5 = ggplot(milnat, aes(x=Perigee,y=Apogee, col=Country))+
+  ggtitle("Surveillance Satellite Orbits") +
+  ylab("Perigee (Km)")+
+  xlab("Apogee (Km)")+
+  guides(color=guide_legend(title="Satellites by nation"))+
+  geom_point()+
+  theme_bw()
+p5 
+
+```
+
+### You can classify the space that you will find each country's spy satellites.
+```{r eval=T, echo=T, warning=F, message = F}
+
+m1 = svm(Country~., data = milnat,type = "C",kernel='radial',cost=100,gamma=0.2)
+plot(m1,milnat, color.palette = rainbow)
+
+```
+
+# Military(red) and Commerical(yellow) satellites zones are SVM classified below.
+
+### I have superimposed the datapoints for the actual orbital locations of Military (M) and Commerical (C) satellites.
+```{r eval=T, echo=T, warning=F, message = F}
+#Military sats
+simporbchar = dplyr::select(combined,Users,Apogee,Perigee)
+m2 = svm(Users~., data =simporbchar, type = "C", kernel='radial',cost=6000,gamma=0.2)
+plot(m2,simporbchar,fill = T)
+
+points(mil$Perigee,mil$Apogee,pch = "M", col = 2, cex = 1)
+points(com$Perigee,com$Apogee,pch = "C", col = 5, cex = 1)
+
+
+
+```
+
+### The SVM model above is 82% accurate at classifiying the two different categories.
+```{r eval=T, echo=T, warning=F, message = F}
+pred = predict(m2,simporbchar)
+predresults = confusionMatrix(pred,as.factor(combined$Users),positive = "Military")
+predresults
+```
+
+### To find unlisted military satelites (Labeled commerical, but military in purpose) I have filtered for the two orbital clusters where the SVM model had difficulty discriminating between satellite type
+
+### Geocentric orbits (Common for communications, GPS, signals satellites)
+```{r eval=T, echo=T, warning=F, message = F}
+#Investigating areas where military and commercial satellites coexist
+milcom2 = subset(com,com$Apogee<35820)
+milcom2 = subset(milcom2,milcom2$Apogee>30000)
+milcom2 = subset(milcom2,milcom2$Perigee>35700)
+milcom2 = subset(milcom2,milcom2$Perigee<35800)
+milcom2 = subset(milcom2,milcom2$Country == c("USA","China","Russia"))
+p6 = ggplot(milcom2, aes(y=milcom2$Perigee,x=milcom2$Apogee, col=Country))+
+  ggtitle("Potential Surveillance Satellite Orbits GEO Cluster") +
+  ylab("Perigee (Km)")+
+  xlab("Apogee (Km)")+
+  guides(color=guide_legend(title="Satellites by nation"))+
+  geom_point()+
+  theme_bw()
+p6 
+```
+
+### Low Earth orbit (Common for photo/video reconnaissance, experiemental launches)
+```{r eval=T, echo=T, warning=F, message = F}
+milcom1 = subset(com,com$Apogee<2000)
+milcom1 = subset(milcom1,milcom1$Perigee<900)
+milcom1 = subset(milcom1,milcom1$Perigee>250)
+
+milcom1 = subset(milcom1,milcom1$Country == c("USA","China","Russia"))
+
+p7 = ggplot(milcom1, aes(y=milcom1$Perigee,x=milcom1$Apogee, col=Country))+
+  ggtitle("Potential Surveillance Satellite Orbits") +
+  ylab("Perigee (Km)")+
+  xlab("Apogee (Km)")+
+  guides(color=guide_legend(title="Satellites by nation LEO Cluster"))+
+  geom_point()+
+  theme_bw()
+p7 
+```
+
+# Conclusion
+
+### I have compiled the a list of potential spy satellites from the GEO and LEO clusters. Notice in the comment column that the UN database also doubts whether several of these satellites are truly commerical in nature.
+```{r eval=T, echo=T, warning=F, message = F}
+#Interesting candidates
+launch_sites= count(milcom2, vars = milcom2$Launch.Site)
+LEOinfo=dplyr::select(milcom1,Operator.Owner,Comments)
+spy_candidates = df[c(19,1462,1083,2013,1664,712,1948,1947,1492,1094,1526,243,1882),]
+spy_candidates_detail=dplyr::select(spy_candidates, Name,Country,type_of_orbit,Purpose,Operator.Owner,Comments)
+knitr::kable(spy_candidates_detail)
+```
+
